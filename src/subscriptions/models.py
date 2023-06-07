@@ -11,6 +11,8 @@ from django_fsm_log.decorators import fsm_log_by, fsm_log_description
 from . import signals
 from .fsm_hooks import post_transition
 from .states import SubscriptionState as State
+from django.contrib.contenttypes.fields import GenericForeignKey
+from django.contrib.contenttypes.models import ContentType
 
 
 def as_date(dt):
@@ -21,8 +23,8 @@ def as_date(dt):
 
 
 class SubscriptionManager(models.Manager):
-    def add_subscription(self, start, end, reference):
-        return self.create(state=State.ACTIVE, start=start, end=end, reference=reference)
+    def add_subscription(self, start, end, reference, **kwargs):
+        return self.create(state=State.ACTIVE, start=start, end=end, reference=reference, **kwargs)
 
     def trigger_renewals(self):
         """
@@ -70,9 +72,7 @@ class SubscriptionManager(models.Manager):
             timeout_hours = timeout_days * 24
 
         count = 0
-        suspended = (
-            self.get_queryset().suspended_timeout(timeout_hours).order_by("last_updated").iterator()
-        )
+        suspended = self.get_queryset().suspended_timeout(timeout_hours).order_by("last_updated").iterator()
         for subscription in suspended:
             subscription.end_subscription()
             count += 1
@@ -88,9 +88,9 @@ class SubscriptionManager(models.Manager):
         """
         retry_stuck = getattr(settings, "SUBSCRIPTIONS_STUCK_RETRY", False)
         count = 0
-        old_renewing: t.Iterable[Subscription] = self.get_queryset().stuck(timeout_hours).order_by(
-            "last_updated"
-        ).iterator()
+        old_renewing: t.Iterable[Subscription] = (
+            self.get_queryset().stuck(timeout_hours).order_by("last_updated").iterator()
+        )
         for subscription in old_renewing:
             if retry_stuck:
                 subscription.renewal_failed(description="stuck subscription")
@@ -122,9 +122,7 @@ class SubscriptionQuerySet(models.QuerySet):
         ).filter(state=State.SUSPENDED, cutoff__lte=timezone.now())
 
     def stuck(self, timeout_hours=2):
-        return self.filter(
-            state=State.RENEWING, last_updated__lte=timezone.now() - timedelta(hours=timeout_hours)
-        )
+        return self.filter(state=State.RENEWING, last_updated__lte=timezone.now() - timedelta(hours=timeout_hours))
 
 
 class Subscription(models.Model):
@@ -137,11 +135,16 @@ class Subscription(models.Model):
     start = models.DateTimeField(default=timezone.now, help_text="When the subscription begins")
     end = models.DateTimeField(help_text="When the subscription ends")
     reference = models.TextField(max_length=100, help_text="Free text field for user references")
-    last_updated = models.DateTimeField(
-        auto_now=True, help_text="Keeps track of when a record was last updated"
-    )
+    last_updated = models.DateTimeField(auto_now=True, help_text="Keeps track of when a record was last updated")
     reason = models.TextField(help_text="Reason for state change, if applicable.")
-
+    content_type = models.ForeignKey(
+        ContentType,
+        on_delete=models.SET_NULL,
+        null=True,
+        help_text="Content type of object to be linked to the subscription",
+    )
+    object_id = models.PositiveIntegerField(null=True, blank=True, help_text="The ID of the linked object")
+    content_object = GenericForeignKey("content_type", "object_id")
     objects = SubscriptionManager.from_queryset(SubscriptionQuerySet)()
 
     class Meta:
