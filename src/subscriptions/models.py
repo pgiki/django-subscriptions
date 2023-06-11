@@ -132,6 +132,12 @@ class Subscription(models.Model):
         protected=True,
         help_text="The current status of the subscription. May not be modified directly.",
     )
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+    )
     start = models.DateTimeField(default=timezone.now, help_text="When the subscription begins")
     end = models.DateTimeField(help_text="When the subscription ends")
     reference = models.TextField(max_length=100, help_text="Free text field for user references")
